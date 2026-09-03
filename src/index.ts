@@ -156,3 +156,5 @@ const readSolanaAccountData = (client: SolanaClient, address: string): [AbortCon
         });
     })];
 }
+
+// export * from './components/VideoPlayer.js';

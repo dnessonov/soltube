@@ -1,24 +1,35 @@
 "use client";
 
 import React, { useState } from 'react';
+import {readSolanaVideoAccount, SolanaVideoAccount} from "../index.js";
+import {SolanaClient} from "@solana/client";
 
 interface VideoPlayerProps {
-    src: string; // Your .fmp4
-    moofIndexSrc: string;
-    fileSize: number;
-    mimeCodec: string;
+    solanaVideoAddress?: string,
+    solanaClient: SolanaClient,
+    src?: string; // Your .fmp4
+    moofIndexSrc?: string;
 }
 
-export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, moofIndexSrc, fileSize, mimeCodec }) => {
+export const MOOF_INDEX_RETRIEVAL_NOT_RETRIEVED = 0;
+export const MOOF_INDEX_RETRIEVAL_RETRIEVING = 1;
+export const MOOF_INDEX_RETRIEVAL_RETRIEVED = 2;
+
+export const VideoPlayer: React.FC<VideoPlayerProps> = ({ solanaVideoAddress, solanaClient, src, moofIndexSrc}) => {
     const videoRef = React.useRef<HTMLVideoElement | null>(null);
     const mediaSourceRef = React.useRef<MediaSource | null>(null);
     const sourceBufferRef = React.useRef<SourceBuffer | null>(null);
 
     // const sourceBufferMoofsRef = React.useRef<number[][] | null>([[0,1333],[40,647958],[63,959320],[92,1407296],[132,1975391],[156,2263568],[185,2724990],[225,3262232],[258,3735382],[287,4157310]]);
+
+    const moofIndexRetievalState = React.useRef<number>(MOOF_INDEX_RETRIEVAL_NOT_RETRIEVED);
+    const moofIndexRetievalAbortController = React.useRef<AbortController | null>(null);
+
     const sourceBufferMoofsRef = React.useRef<number[][] | null>(null);
     const currentlyDownloadingMoofIndex = React.useRef<number | null | undefined>(undefined);
     const nextDownloadingMoofIndex = React.useRef<number | null>(null);
     const currentPositionTimeUnitsBeforeWorryAboutNextInterval = React.useRef<number | null | undefined>(undefined);
+    const currentPositionRemoveTimeRangesAround = React.useRef<number | null>(1200); // in timeunits (1/2 of a sec.) will remove intervals around cursor to prevent overloading SourceBuffer
     const currentPositionTimeUnits = React.useRef<number | null>(null);
     const addedMoofs = React.useRef<Set<number>>(new Set());
 
@@ -87,46 +98,77 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, moofIndexSrc, fil
         mediaSource.addEventListener('sourceopen', onSourceOpen);
 
         return () => {
+
+            if (moofIndexRetievalAbortController.current !== null){
+                moofIndexRetievalAbortController.current.abort();
+            }
+
             mediaSource.removeEventListener('sourceopen', onSourceOpen);
             if(mediaSource.readyState === 'open'){
                 mediaSource.endOfStream();
             }
+
         }
-    }, [src,fileSize,mimeCodec]);
+    }, [src]);
 
 
     const fetchMoofIndex = async() => {
-        const response = await fetch(moofIndexSrc, {});
-        const buffer: Buffer<ArrayBuffer> = Buffer.from(await response.arrayBuffer());
 
-        if(sourceBufferMoofsRef.current === null){
-            sourceBufferMoofsRef.current = [];
-        }
+        if (moofIndexRetievalState.current === MOOF_INDEX_RETRIEVAL_NOT_RETRIEVED) {
 
-        let _offset = 0;
+            moofIndexRetievalState.current = MOOF_INDEX_RETRIEVAL_RETRIEVING;
 
-        sb_bit_rate.current = buffer.readUInt32LE(_offset);
-        sb_video_stream_i.current = buffer.readUInt8(_offset+4);
-        sb_audio_stream_i.current = buffer.readUInt8(_offset+5);
-        sb_audio_channels.current = buffer.readUInt8(_offset+6);
-        sb_audio_sample_rate.current = buffer.readUInt32LE(_offset+7);
-        sb_video_resolution_h.current = buffer.readUInt16LE(_offset+11);
-        sb_video_resolution_w.current = buffer.readUInt16LE(_offset+13);
-        sb_duration.current = buffer.readUInt32LE(_offset+15);
+            if(typeof solanaVideoAddress === "string") {
+                console.log("solanaVideoAddress CP1");
+                const [abortCtrl, solanaAccountPromise] = readSolanaVideoAccount(solanaClient, solanaVideoAddress);
+                console.log("solanaVideoAddress CP2");
+                moofIndexRetievalAbortController.current = abortCtrl;
+                solanaAccountPromise.then(async (solVideoAccount :SolanaVideoAccount | null | undefined) => {
+                    console.log("VideoPlayer read solana acct", solVideoAccount);
+                    if(solVideoAccount?.storages){
 
-        const codec_str_len = buffer.readUInt8(_offset+19);
-        sb_codec_str.current = "";
-        if(codec_str_len > 0){
-            sb_codec_str.current += buffer.toString('ascii', 20, 20+codec_str_len);
-        }
+                    }
+                }).catch((err :any) => {
+                    moofIndexRetievalState.current = MOOF_INDEX_RETRIEVAL_NOT_RETRIEVED;
+                    // TODO: repeat attempt in 5 - 15 seconds or so
+                }).finally(() => {
+                    moofIndexRetievalAbortController.current = null;
+                });
+            }
 
-        _offset +=20 + codec_str_len;
+            const response = await fetch(moofIndexSrc ?? '', {});
+            const buffer: Buffer<ArrayBuffer> = Buffer.from(await response.arrayBuffer());
 
-        while(_offset < buffer.byteLength){
-            const _timeVal = buffer.readUInt32LE(_offset);
-            const _seekVal = buffer.readUInt32LE(_offset + 4);
-            _offset+=8;
-            sourceBufferMoofsRef.current.push([_timeVal, _seekVal]);
+            if(sourceBufferMoofsRef.current === null){
+                sourceBufferMoofsRef.current = [];
+            }
+
+            let _offset = 0;
+
+            sb_bit_rate.current = buffer.readUInt32LE(_offset);
+            sb_video_stream_i.current = buffer.readUInt8(_offset+4);
+            sb_audio_stream_i.current = buffer.readUInt8(_offset+5);
+            sb_audio_channels.current = buffer.readUInt8(_offset+6);
+            sb_audio_sample_rate.current = buffer.readUInt32LE(_offset+7);
+            sb_video_resolution_h.current = buffer.readUInt16LE(_offset+11);
+            sb_video_resolution_w.current = buffer.readUInt16LE(_offset+13);
+            sb_duration.current = buffer.readUInt32LE(_offset+15);
+
+            const codec_str_len = buffer.readUInt8(_offset+19);
+            sb_codec_str.current = "";
+            if(codec_str_len > 0){
+                sb_codec_str.current += buffer.toString('ascii', 20, 20+codec_str_len);
+            }
+
+            _offset +=20 + codec_str_len;
+
+            while(_offset < buffer.byteLength){
+                const _timeVal = buffer.readUInt32LE(_offset);
+                const _seekVal = buffer.readUInt32LE(_offset + 4);
+                _offset+=8;
+                sourceBufferMoofsRef.current.push([_timeVal, _seekVal]);
+            }
+            moofIndexRetievalState.current = MOOF_INDEX_RETRIEVAL_RETRIEVED;
         }
     }
 
@@ -155,7 +197,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, moofIndexSrc, fil
             // console.log("moofIndex passed(CP3):", moofIndex);
             while(addedMoofs.current.has(moofIndex)){
                 moofIndex++;
-                if((typeof currentPositionTimeUnitsBeforeWorryAboutNextInterval.current === 'number') && (sourceBufferMoofsRef.current?.[moofIndex] !== undefined) && (typeof sourceBufferMoofsRef.current?.[moofIndex][0] === 'number') && (sourceBufferMoofsRef.current?.[moofIndex][0] <= ((currentPositionTimeUnits.current ?? 0) + currentPositionTimeUnitsBeforeWorryAboutNextInterval.current))){
+                if((typeof currentPositionTimeUnitsBeforeWorryAboutNextInterval.current === 'number') && (sourceBufferMoofsRef.current?.[moofIndex] !== undefined) && (typeof sourceBufferMoofsRef.current?.[moofIndex][0] === 'number')
+                    && (sourceBufferMoofsRef.current?.[moofIndex][0] <= ((currentPositionTimeUnits.current ?? 0) + currentPositionTimeUnitsBeforeWorryAboutNextInterval.current))){
                     //console.log("moofIndex passed(CP4.1):", moofIndex);
                 }else{
                     //console.log("moofIndex passed(CP4.2):", moofIndex);
@@ -178,7 +221,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, moofIndexSrc, fil
                 end = null; // query whole file without http bytes ranges header
                 break;
             }else{
-                if((sourceBufferMoofsRef.current?.[_moofIndexTo][0] !== undefined) && (typeof currentPositionTimeUnitsBeforeWorryAboutNextInterval.current === 'number') && (sourceBufferMoofsRef.current?.[_moofIndexTo][0] <= ((currentPositionTimeUnits.current ?? 0) + currentPositionTimeUnitsBeforeWorryAboutNextInterval.current)) && (!addedMoofs.current.has(_moofIndexTo))){
+                if((sourceBufferMoofsRef.current?.[_moofIndexTo][0] !== undefined) && (typeof currentPositionTimeUnitsBeforeWorryAboutNextInterval.current === 'number')
+                    && (sourceBufferMoofsRef.current?.[_moofIndexTo][0] <= ((currentPositionTimeUnits.current ?? 0) + currentPositionTimeUnitsBeforeWorryAboutNextInterval.current))
+                    && (!addedMoofs.current.has(_moofIndexTo))){
                     _moofIndexTo++;
                 }else{
                     break;
@@ -187,26 +232,29 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, moofIndexSrc, fil
         }
 
         try {
-            const use_bytes_header :boolean = ((start !== null) && (start !== undefined)) || (end !== null && end !== undefined);
-            const endHttpHeaderStr = (end !== null && end !== undefined) ? `${end}` : "";
-            const response = await fetch(src, { headers: use_bytes_header ? { 'Range': `bytes=${start}-${endHttpHeaderStr}` } : {} });
-            if ((response.status !== 206) && use_bytes_header) throw new Error("Server must support HTTP 206 Range requests");
-
-            const buffer = await response.arrayBuffer();
-
-            // console.log("for loop:", moofIndex ?? 0, _moofIndexTo);
-            for(let _i = moofIndex ?? 0; _i < (_moofIndexTo ?? ((sourceBufferMoofsRef.current?.length ?? 1) - 1) ) ; _i++){
-                //console.log("addedMoofs push", _i);
-                if(!addedMoofs.current.has(_i)){addedMoofs.current.add(_i);}
-            }
-            //currentByteRef.current += buffer.byteLength;
-
+            const buffer = await retrVideoBuf(moofIndex, _moofIndexTo, start, end);
             sourceBufferRef.current.appendBuffer(buffer);
-            //console.log("fetchNextSequentialChunk appendBuffer called ", /*currentByteRef.current,*/ buffer.byteLength);
         } catch (err) {
             console.error("Chunk retrieval failed:", err);
             isAppendingRef.current = false;
         }
+    }
+
+    const retrVideoBuf = async (moofFrom :number | null, moofTo :number, brStart :number | null | undefined, brEnd: number | null) => {
+        const use_bytes_header :boolean = ((brStart !== null) && (brStart !== undefined)) || (brEnd !== null && brEnd !== undefined);
+        const endHttpHeaderStr = (brEnd !== null && brEnd !== undefined) ? `${brEnd}` : "";
+
+        const response = await fetch(src ?? '', { headers: use_bytes_header ? { 'Range': `bytes=${brStart}-${endHttpHeaderStr}` } : {} });
+        if ((response.status !== 206) && use_bytes_header) throw new Error("Server must support HTTP 206 Range requests");
+        const buffer = await response.arrayBuffer();
+
+        // mark downloaded moofs as received
+        for(let _i = moofFrom ?? 0; _i < (moofTo ?? ((sourceBufferMoofsRef.current?.length ?? 1) - 1) ) ; _i++){
+            //console.log("addedMoofs push", _i);
+            if(!addedMoofs.current.has(_i)){addedMoofs.current.add(_i);}
+        }
+
+        return buffer;
     }
 
     const handleSeek = async () => {
@@ -274,6 +322,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, moofIndexSrc, fil
                     fetchNextSequentialChunk(_atMoofIndex + 1);
                 }
             }
+        }
+
+        if(currentPositionRemoveTimeRangesAround.current !== null){
+            // TODO: sourceBuffer.remove everything outside (cursor-currentPositionRemoveTimeRangesAround.current; cursor+currentPositionRemoveTimeRangesAround.current)
+            // TODO: update addedMoofs too by removing respective moofs
+            // TODO: call this periodically, not more often than once in a minute, two minutes or so when video is playing (not paused)
         }
     }
 

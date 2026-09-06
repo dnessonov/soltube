@@ -77,7 +77,7 @@ export interface CreateStorageResultWeb3 {
     tx_write_signatures: string[];
 }
 
-export const buildCreateStorageInstructionWeb3 = async (owner: PublicKey, feePayer: PublicKey, storage_id :string, initial_bin_data: Uint8Array, projected_overall_bin_data_length :number, options? :CreateStorageOptionsWeb3) : Promise<CreateStorageFirstInstructionResultWeb3> => {
+const buildCreateStorageInstructionWeb3 = async (owner: PublicKey, feePayer: PublicKey, storage_id :string, initial_bin_data: Uint8Array, projected_overall_bin_data_length :number, options? :CreateStorageOptionsWeb3) : Promise<CreateStorageFirstInstructionResultWeb3> => {
     const programId = new PublicKey(typeof options?.overrideProgramId === "string" ? options.overrideProgramId : SOLANA_PROGRAM_ADDRESS);
 
     const str_id_hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(storage_id)));
@@ -105,7 +105,7 @@ export const buildCreateStorageInstructionWeb3 = async (owner: PublicKey, feePay
     return {pda, bump, ix};
 }
 
-export const buildUpdateStorageInstructionWeb3 = (owner: PublicKey, feePayer: PublicKey, pda_account :PublicKey, bump: number, bin_data: Uint8Array, bin_data_offset :number, do_trim_account_data :boolean, options? :CreateStorageOptionsWeb3) : TransactionInstruction => {
+const buildUpdateStorageInstructionWeb3 = (owner: PublicKey, feePayer: PublicKey, pda_account :PublicKey, bump: number, bin_data: Uint8Array, bin_data_offset :number, do_trim_account_data :boolean, options? :CreateStorageOptionsWeb3) : TransactionInstruction => {
     const programId = new PublicKey(typeof options?.overrideProgramId === "string" ? options.overrideProgramId : SOLANA_PROGRAM_ADDRESS);
 
 
@@ -188,9 +188,6 @@ export const createStorageWeb3 = async (connection :Connection, owner: Keypair, 
         return null;
     }
 }
-
-
-
 
 export const buildCreateStorageInstructionClientHelper = (storage_id :string, options? :CreateStorageOptionsWeb3) => {
 

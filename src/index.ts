@@ -44,13 +44,15 @@ export const readSolanaVideoAccount = (client: SolanaClient, address: string): [
 
                         const accountBump = subArrayBytesView.getUint8(33);
                         const videoDuration = subArrayBytesView.getUint32(34, true);
-                        const numStorages = subArrayBytesView.getUint16(36, true);
+                        const numStorages = subArrayBytesView.getUint16(38, true);
+
+                        console.log('read numStorages', numStorages, videoDuration, data.length);
 
                         const storages: VideoAccountStorageParam[] = [];
                         let _storage_offset = 40;
                         for (let i = 0; i < numStorages; i++) {
 
-                            if(data.length < _storage_offset + 33){
+                            if(data.length < (_storage_offset + 33)){
                                 resolve(null);
                                 break;
                             }else{
@@ -59,6 +61,8 @@ export const readSolanaVideoAccount = (client: SolanaClient, address: string): [
                                 const storageParam = data[_storage_offset + 32];
 
                                 storages.push({address: storageAddr, param: storageParam});
+
+                                console.log('storageAddr', _storage_offset, storageAddr.toBase58());
                                 _storage_offset += 33;
                             }
                         }

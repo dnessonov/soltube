@@ -1,13 +1,14 @@
 import {PublicKey, SystemProgram, TransactionInstruction, Transaction, Keypair,Connection,BlockhashWithExpiryBlockHeight,sendAndConfirmTransaction} from "@solana/web3.js";
 import * as borsh from "borsh";
 import {compress as compressBr} from 'brotli-compress';
+import {Web3StoragePoint} from "./index.js";
 
 export const SOLANA_PROGRAM_ADDRESS = "FviQDovpzu6wRh9xeZESmVbMkNH6f6Tpn8QbAkLGw1um";
 
 export const CreateStorageOptionsWeb3_DATA_MAX_FRAGMENT_SIZE = 720;
 
 export interface CreateStorageOptionsWeb3 {
-    address: PublicKey;
+//    address: PublicKey;
     data_max_fragment_size?: number; // may override default CreateStorageOptionsWeb3_DATA_MAX_FRAGMENT_SIZE if specified
     overrideProgramId? :string;
     latestBlockHash ?:BlockhashWithExpiryBlockHeight;
@@ -89,7 +90,7 @@ const buildCreateStorageInstructionWeb3 = async (owner: PublicKey, feePayer: Pub
 
     const payload = borsh.serialize(
         InitializeNewStorageArgsInstructionSchema,
-        new InitializeNewStorageArgs({str_id: storage_id, bump: bump, data: initial_bin_data, projected_overall_bin_data_length: projected_overall_bin_data_length})
+        new InitializeNewStorageArgs({str_id: storage_id, bump: bump, data: initial_bin_data, projected_bin_data_length: projected_overall_bin_data_length})
     );
     const instructionBuffer = Buffer.concat([variant, Buffer.from(payload)]);
 
@@ -134,7 +135,9 @@ export const buildCreateStorageInstructionsWeb3 = async (owner: PublicKey, feePa
 
     let data_offset = 0;
     let data_first_chunk_len = Math.min(max_data_fragment_len, acct_data.length);
+    console.log("buildCreateStorageInstructionsWeb3 CP1", data_first_chunk_len, acct_data.length);
     const ix1 = await buildCreateStorageInstructionWeb3(owner, feePayer, storage_id, acct_data.subarray(data_offset,data_first_chunk_len), acct_data.length, options);
+    console.log("buildCreateStorageInstructionsWeb3 CP2", ix1);
     data_offset+=data_first_chunk_len;
 
     const ixs: TransactionInstruction[] = [ix1.ix];
@@ -149,10 +152,11 @@ export const buildCreateStorageInstructionsWeb3 = async (owner: PublicKey, feePa
 }
 
 
-export const createStorageWeb3 = async (connection :Connection, owner: Keypair, feePayer: Keypair, storage_id :string, data: Uint8Array, options? :CreateStorageOptionsWeb3) : Promise<CreateStorageResultWeb3 | null> => {
+export const createStorageWeb3RawBinaryData = async (connection :Connection, owner: Keypair, feePayer: Keypair, storage_id :string, data: Uint8Array, options? :CreateStorageOptionsWeb3) : Promise<CreateStorageResultWeb3 | null> => {
     const latestBlockHash = typeof options?.latestBlockHash !== 'undefined' ? options.latestBlockHash : await connection.getLatestBlockhash();
 
     const ixs = await buildCreateStorageInstructionsWeb3(owner.publicKey, feePayer.publicKey, storage_id, data, options);
+
     if(ixs.ixs?.[0]){
 
         let transaction0 = new Transaction({
@@ -187,6 +191,47 @@ export const createStorageWeb3 = async (connection :Connection, owner: Keypair, 
     }else{
         return null;
     }
+}
+
+export const createStorageWeb3 = (connection :Connection, owner: Keypair, feePayer: Keypair, storage_id :string, data: Web3StoragePoint[], options? :CreateStorageOptionsWeb3) : Promise<CreateStorageResultWeb3 | null> => {
+
+    let binaryDataBlocks :Uint8Array[] = [];
+    let binaryDataBlocks_size :number = 0;
+    data.forEach((value, key) => {
+        const sv = serializeWeb3StoragePoint(value);
+        binaryDataBlocks.push(sv);
+        binaryDataBlocks_size+=sv.length;
+    });
+
+    const oa_data :Uint8Array = new Uint8Array(binaryDataBlocks_size);
+    let offset = 0;
+    binaryDataBlocks.forEach((value, key) => {
+        oa_data.set(value, offset);
+        offset+=value.byteLength;
+    })
+
+    const createStorageResult = createStorageWeb3RawBinaryData(connection, owner, feePayer, storage_id, oa_data, options);
+    return createStorageResult;
+}
+
+const serializeWeb3StoragePoint = (inputData :Web3StoragePoint) :Uint8Array => {
+    const encoder = new TextEncoder();
+    const binaryData: Uint8Array = encoder.encode(inputData.url);
+
+    const binaryData2Bytes = new Uint8Array(2);
+    const binaryData2BytesView = new DataView(binaryData2Bytes.buffer);
+    binaryData2BytesView.setUint16(0, binaryData.length, true);
+
+    const paramData1Byte = new Uint8Array(1);
+    const paramData1ByteView = new DataView(paramData1Byte.buffer);
+    paramData1ByteView.setUint8(0, inputData.param);
+
+    const resultArray = new Uint8Array(3+binaryData.length);
+    resultArray.set(paramData1Byte, 0);
+    resultArray.set(binaryData2Bytes, 1);
+    resultArray.set(binaryData, 3);
+
+    return resultArray;
 }
 
 export const buildCreateStorageInstructionClientHelper = (storage_id :string, options? :CreateStorageOptionsWeb3) => {

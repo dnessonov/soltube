@@ -15,10 +15,15 @@ export interface SolanaVideoAccount {
     storages: VideoAccountStorageParam[];
 }
 
+export interface Web3StoragePoint {
+    url :string;
+    param :number;
+}
+
 export interface SolanaVideoStorageAccount {
     admin: PublicKey;
     bump: number;
-    data: Uint8Array
+    data: Web3StoragePoint[];
 }
 
 
@@ -98,10 +103,10 @@ export const readSolanaVideoStorageAccount = (client: SolanaClient, address: str
                         const accountBump = subArrayBytesView.getUint8(1);
                         const adminAddrBytes = data.subarray(2, 34);
                         const adminAddr = new PublicKey(adminAddrBytes);
-                        console.log('Promised admin:', adminAddr.toBase58());
+                        console.log('Promised storage admin:', adminAddr.toBase58());
                         const binary_data_len = subArrayBytesView.getUint16(34, true);
 
-                        console.log("Promised binary_data_len:", binary_data_len);
+                        console.log("Promised storage binary_data_len:", binary_data_len);
 
                         const binaryBytes = data.subarray(36, 36 + binary_data_len);
                         let decompressedBytes :Uint8Array;
@@ -112,7 +117,23 @@ export const readSolanaVideoStorageAccount = (client: SolanaClient, address: str
                             reject({errno: 1, error: 'Unable to decompress account data.', brotliError: brError});
                         }
 
-                        resolve({admin: adminAddr, bump: accountBump, data: decompressedBytes});
+                        let points: Web3StoragePoint[] = [];
+                        if (decompressedBytes.length > 0) {
+                            // unwrap
+                            const decompressedBytesDataView = new DataView(decompressedBytes.buffer);
+                            let _dc_offset = 0;
+
+                            const textDecoder = new TextDecoder();
+
+                            while (_dc_offset < decompressedBytesDataView.byteLength) {
+                                const url_str_len = decompressedBytesDataView.getUint16(_dc_offset + 1,true);
+                                const url_str = textDecoder.decode(decompressedBytes.subarray(_dc_offset+3,_dc_offset+3+url_str_len));
+                                points.push({param: decompressedBytesDataView.getUint8(_dc_offset), url: url_str});
+                                _dc_offset+=3+url_str_len;
+                            }
+                        }
+
+                        resolve({admin: adminAddr, bump: accountBump, data: points});
                     }
                 }
             }

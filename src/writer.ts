@@ -78,12 +78,17 @@ export interface CreateStorageResultWeb3 {
     tx_write_signatures: string[];
 }
 
-const buildCreateStorageInstructionWeb3 = async (owner: PublicKey, feePayer: PublicKey, storage_id :string, initial_bin_data: Uint8Array, projected_overall_bin_data_length :number, options? :CreateStorageOptionsWeb3) : Promise<CreateStorageFirstInstructionResultWeb3> => {
-    const programId = new PublicKey(typeof options?.overrideProgramId === "string" ? options.overrideProgramId : SOLANA_PROGRAM_ADDRESS);
+const generatePdaForVideoStorage = async (storage_id: string, programIdOverrideStr ?:string) => {
+    const programId = new PublicKey(typeof programIdOverrideStr === "string" ? programIdOverrideStr : SOLANA_PROGRAM_ADDRESS);
 
     const str_id_hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(storage_id)));
     const seeds = [Buffer.from("storage"), str_id_hash];
-    const [pda, bump] = PublicKey.findProgramAddressSync(seeds, programId);
+
+    return { address: PublicKey.findProgramAddressSync(seeds, programId), programId: programId };
+}
+
+const buildCreateStorageInstructionWeb3 = async (owner: PublicKey, feePayer: PublicKey, storage_id :string, initial_bin_data: Uint8Array, projected_overall_bin_data_length :number, options? :CreateStorageOptionsWeb3) : Promise<CreateStorageFirstInstructionResultWeb3> => {
+    const { address: [pda, bump], programId: programId} = await generatePdaForVideoStorage(storage_id, typeof options?.overrideProgramId === "string" ? options.overrideProgramId : SOLANA_PROGRAM_ADDRESS);
     const pda_account = new PublicKey(pda);
 
     const variant = Buffer.from([6]); // enum variant index = 6
@@ -129,22 +134,32 @@ const buildUpdateStorageInstructionWeb3 = (owner: PublicKey, feePayer: PublicKey
 }
 
 
-export const buildCreateStorageInstructionsWeb3 = async (owner: PublicKey, feePayer: PublicKey, storage_id :string, data: Uint8Array, options? :CreateStorageOptionsWeb3) : Promise<BuildCreateStorageInstructionsResultWeb3> => {
+export const buildCreateOrUpdateStorageInstructionsWeb3 = async (owner: PublicKey, feePayer: PublicKey, storage_id :string | [PublicKey,number], data: Uint8Array, options? :CreateStorageOptionsWeb3) : Promise<BuildCreateStorageInstructionsResultWeb3> => {
     const acct_data: Uint8Array = await compressBr(data);
     const max_data_fragment_len = typeof options?.data_max_fragment_size === 'number' ? options.data_max_fragment_size : CreateStorageOptionsWeb3_DATA_MAX_FRAGMENT_SIZE;
 
     let data_offset = 0;
     let data_first_chunk_len = Math.min(max_data_fragment_len, acct_data.length);
-    console.log("buildCreateStorageInstructionsWeb3 CP1", data_first_chunk_len, acct_data.length);
-    const ix1 = await buildCreateStorageInstructionWeb3(owner, feePayer, storage_id, acct_data.subarray(data_offset,data_first_chunk_len), acct_data.length, options);
-    console.log("buildCreateStorageInstructionsWeb3 CP2", ix1);
+    //console.log("buildCreateStorageInstructionsWeb3 CP1", data_first_chunk_len, acct_data.length);
+    console.info("Storage update/create. First chunk len: " + data_offset + " bytes. Total account data len: " + acct_data.length + " bytes.");
+    let ix1:any;
+    if(typeof storage_id === 'string') {
+        ix1 = await buildCreateStorageInstructionWeb3(owner, feePayer, storage_id, acct_data.subarray(data_offset, data_first_chunk_len), acct_data.length, options);
+    }else{
+        ix1 = { pda: storage_id[0], bump: storage_id[1], ix: null };
+        const do_trim_account_data = data_first_chunk_len === acct_data.length;
+        ix1.ix = buildUpdateStorageInstructionWeb3(owner,feePayer,ix1.pda,ix1.bump,acct_data.subarray(data_offset, data_first_chunk_len),data_offset,do_trim_account_data);
+    }
+    //console.log("buildCreateStorageInstructionsWeb3 CP2", ix1);
     data_offset+=data_first_chunk_len;
 
     const ixs: TransactionInstruction[] = [ix1.ix];
 
     while (data_offset < acct_data.length) {
         data_first_chunk_len = Math.min(max_data_fragment_len, acct_data.length - data_offset);
-        const ix2 = buildUpdateStorageInstructionWeb3(owner,feePayer,ix1.pda,ix1.bump,acct_data.subarray(data_offset, data_first_chunk_len),data_offset,false);
+        const do_trim_account_data = (typeof storage_id !== 'string') && ((data_offset + data_first_chunk_len) === acct_data.length);
+        const ix2 = buildUpdateStorageInstructionWeb3(owner,feePayer,ix1.pda,ix1.bump,acct_data.subarray(data_offset, data_first_chunk_len),data_offset,do_trim_account_data);
+        data_offset += data_first_chunk_len;
         ixs.push(ix2);
     }
 
@@ -152,10 +167,10 @@ export const buildCreateStorageInstructionsWeb3 = async (owner: PublicKey, feePa
 }
 
 
-export const createStorageWeb3RawBinaryData = async (connection :Connection, owner: Keypair, feePayer: Keypair, storage_id :string, data: Uint8Array, options? :CreateStorageOptionsWeb3) : Promise<CreateStorageResultWeb3 | null> => {
+export const createOrUpdateStorageWeb3RawBinaryData = async (connection :Connection, owner: Keypair, feePayer: Keypair, storage_id :string | [PublicKey,number], data: Uint8Array, options? :CreateStorageOptionsWeb3) : Promise<CreateStorageResultWeb3 | null> => {
     const latestBlockHash = typeof options?.latestBlockHash !== 'undefined' ? options.latestBlockHash : await connection.getLatestBlockhash();
 
-    const ixs = await buildCreateStorageInstructionsWeb3(owner.publicKey, feePayer.publicKey, storage_id, data, options);
+    const ixs = await buildCreateOrUpdateStorageInstructionsWeb3(owner.publicKey, feePayer.publicKey, storage_id, data, options);
 
     if(ixs.ixs?.[0]){
 
@@ -193,7 +208,7 @@ export const createStorageWeb3RawBinaryData = async (connection :Connection, own
     }
 }
 
-export const createStorageWeb3 = (connection :Connection, owner: Keypair, feePayer: Keypair, storage_id :string, data: Web3StoragePoint[], options? :CreateStorageOptionsWeb3) : Promise<CreateStorageResultWeb3 | null> => {
+export const createOrUpdateStorageWeb3 = (connection :Connection, owner: Keypair, feePayer: Keypair, storage_id :string | [PublicKey,number], data: Web3StoragePoint[], options? :CreateStorageOptionsWeb3) : Promise<CreateStorageResultWeb3 | null> => {
 
     let binaryDataBlocks :Uint8Array[] = [];
     let binaryDataBlocks_size :number = 0;
@@ -210,7 +225,7 @@ export const createStorageWeb3 = (connection :Connection, owner: Keypair, feePay
         offset+=value.byteLength;
     })
 
-    const createStorageResult = createStorageWeb3RawBinaryData(connection, owner, feePayer, storage_id, oa_data, options);
+    const createStorageResult = createOrUpdateStorageWeb3RawBinaryData(connection, owner, feePayer, storage_id, oa_data, options);
     return createStorageResult;
 }
 

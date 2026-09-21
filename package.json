@@ -35,17 +35,18 @@
   },
   "devDependencies": {
     "@types/node": "^26.4.0",
-    "tsup": "^8.5.1",
-    "typescript": "^5.0.0",
+    "@types/react": "^19.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "@types/react": "^19.0.0"
+    "tsup": "^8.5.1",
+    "typescript": "^5.0.0"
   },
   "dependencies": {
     "@solana/client": "^1.7.0",
     "@solana/web3.js": "^1.98.4",
     "borsh": "^2.0.0",
     "brotli-compress": "^2.2.2",
-    "fzstd": "^0.1.1"
+    "fzstd": "^0.1.1",
+    "js-crc": "^0.3.1"
   }
 }

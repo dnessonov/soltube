@@ -2,10 +2,11 @@ import {PublicKey, SystemProgram, TransactionInstruction, Transaction, Keypair,C
 import * as borsh from "borsh";
 import {compress as compressBr} from 'brotli-compress';
 import {Web3StoragePoint} from "./index.js";
-
-export const SOLANA_PROGRAM_ADDRESS = "FviQDovpzu6wRh9xeZESmVbMkNH6f6Tpn8QbAkLGw1um";
+import {buildCreateOrUpdateVideoInstructionBuffer, CreateNewVideoArgsStorageConfig, OP_CREATE_VIDEO, OP_UPDATE_VIDEO, SOLANA_PROGRAM_ADDRESS} from "./common/instructionsSerialize.js";
 
 export const CreateStorageOptionsWeb3_DATA_MAX_FRAGMENT_SIZE = 720;
+
+export { OP_CREATE_VIDEO, OP_UPDATE_VIDEO, CreateNewVideoArgsStorageConfig, SOLANA_PROGRAM_ADDRESS };
 
 export interface CreateStorageOptionsWeb3 {
 //    address: PublicKey;
@@ -252,3 +253,76 @@ const serializeWeb3StoragePoint = (inputData :Web3StoragePoint) :Uint8Array => {
 export const buildCreateStorageInstructionClientHelper = (storage_id :string, options? :CreateStorageOptionsWeb3) => {
 
 }
+
+export interface BuildCreateOrUpdateVideoInstructionResultWeb3 {
+    pda :PublicKey;
+    bump :number;
+    ix :TransactionInstruction;
+}
+
+export interface CreateOrUpdateVideoResultWeb3 {
+    pda :PublicKey;
+    bump :number;
+    tx_signature :string;
+}
+
+export const buildCreateOrUpdateVideoInstructionWeb3 = async (operation :typeof OP_CREATE_VIDEO, owner: PublicKey, feePayer: PublicKey, video_id :string, storages_to_add :CreateNewVideoArgsStorageConfig[], storages_to_del :PublicKey[] | null, options? :CreateStorageOptionsWeb3) : Promise<BuildCreateOrUpdateVideoInstructionResultWeb3> => {
+    const programId = new PublicKey(typeof options?.overrideProgramId === "string" ? options.overrideProgramId : SOLANA_PROGRAM_ADDRESS);
+
+    let pda_address: PublicKey;
+    let bump: number | undefined = undefined;
+
+    switch(operation){
+        case OP_CREATE_VIDEO:
+            const str_id_hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(video_id)));
+            const seeds = [Buffer.from("video"), str_id_hash];
+            [pda_address, bump] = PublicKey.findProgramAddressSync(seeds, programId);
+            break;
+        case OP_UPDATE_VIDEO:
+        default:
+            pda_address = new PublicKey(video_id);
+            break;
+
+    }
+
+    const sf_seeds = [Buffer.from("service_fee_wallet")];
+    const [sf_pda,sf_bump] = PublicKey.findProgramAddressSync(sf_seeds, programId);
+    const sf_pda_account = new PublicKey(sf_pda);
+
+
+    const instructionBuffer = await buildCreateOrUpdateVideoInstructionBuffer(operation, video_id, storages_to_add, storages_to_del);
+
+    const keys = [
+        {pubkey: owner, isSigner: true, isWritable: false}, // storage admin
+        {pubkey: feePayer, isSigner: true, isWritable: false}, // fee payer
+        {pubkey: pda_address, isSigner: false, isWritable: true},
+        {pubkey: sf_pda_account, isSigner: false, isWritable: true},
+        {pubkey: SystemProgram.programId, isSigner: false, isWritable: false},
+    ];
+
+    const ix = new TransactionInstruction({keys: keys, programId: programId, data: instructionBuffer});
+    return {ix: ix, bump: (typeof bump === 'undefined')?0:bump, pda: pda_address};
+}
+
+export const createOrUpdateVideoWeb3 = async (operation :typeof OP_CREATE_VIDEO, connection :Connection, owner: Keypair, feePayer: Keypair, video_id :string, storages_to_add :CreateNewVideoArgsStorageConfig[], storages_to_del :PublicKey[] | null, options? :CreateStorageOptionsWeb3) : Promise<CreateOrUpdateVideoResultWeb3 | null> => {
+    const latestBlockHash = typeof options?.latestBlockHash !== 'undefined' ? options.latestBlockHash : await connection.getLatestBlockhash();
+    const {pda, bump, ix}  = await buildCreateOrUpdateVideoInstructionWeb3(operation, owner.publicKey, feePayer.publicKey, video_id, storages_to_add, storages_to_del, options);
+
+    let transaction = new Transaction({
+        feePayer: feePayer.publicKey,
+        blockhash: latestBlockHash.blockhash,
+        lastValidBlockHeight: latestBlockHash.lastValidBlockHeight
+    }).add(ix);
+
+    const tx_signers = [feePayer];
+    if(!feePayer.publicKey.equals(owner.publicKey)){ tx_signers.push(owner); }
+
+    const transactionSignature = await sendAndConfirmTransaction(
+        connection,
+        transaction,
+        tx_signers
+    );
+
+    return { pda: pda, bump: bump, tx_signature: transactionSignature };
+}
+

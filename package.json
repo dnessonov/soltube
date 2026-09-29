@@ -20,14 +20,19 @@
       "types": "./dist/writer.d.ts",
       "import": "./dist/writer.js",
       "require": "./dist/writer.cjs"
+    },
+    "./writerClient": {
+      "types": "./dist/writerClient.d.ts",
+      "import": "./dist/writerClient.js",
+      "require": "./dist/writerClient.cjs"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts src/writer.ts src/react.ts --format cjs,esm --dts",
-    "dev": "tsup src/index.ts src/writer.ts src/react.ts --format cjs,esm --dts --watch"
+    "build": "tsup src/index.ts src/writerClient.ts src/writer.ts src/react.ts --format cjs,esm --dts",
+    "dev": "tsup src/index.ts src/writerClient.ts src/writer.ts src/react.ts --format cjs,esm --dts --watch"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",

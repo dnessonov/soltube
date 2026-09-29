@@ -12,8 +12,8 @@ import {SolanaClient} from "@solana/client";
 interface VideoPlayerProps {
     solanaVideoAddress?: string,
     solanaClient: SolanaClient,
-    src?: string; // Your .fmp4
-    moofIndexSrc?: string;
+    style: any,
+    onMetaDataAvailable?: (metaData: any) => void
 }
 
 interface VideoPlayerLoadedSolanaStorage {
@@ -27,10 +27,13 @@ interface VideoDataSource {
     type:
         "data" // actual video data
       | "midx" // moofs index
-      | "mcs", // checksums for the actual data
+      | "mcs"  // checksums for the actual data
+      | "metadata", // metadata, including title & description of the video
 
-    url: string
-    ranges: number[][] | null
+    url: string,
+    ranges: number[][] | null,
+
+    isAuthenticFlag: number
 }
 
 export const VIDEO_OPENING_STATE_NOT_OPEN = 0;
@@ -41,7 +44,7 @@ export const VIDEO_OPENING_STATE_CHECKING_MOOF_INDEX = 3;
 export const VIDEO_OPENING_STATE_MOOF_INDEX_RECEIVED = 4;
 export const VIDEO_OPENING_STATE_MOOF_INDEX_LOADED = 5;
 
-export const VideoPlayer: React.FC<VideoPlayerProps> = ({ solanaVideoAddress, solanaClient, src, moofIndexSrc}) => {
+export const VideoPlayer: React.FC<VideoPlayerProps> = ({ solanaVideoAddress, solanaClient, style, onMetaDataAvailable}) => {
     const videoRef = React.useRef<HTMLVideoElement | null>(null);
     const mediaSourceRef = React.useRef<MediaSource | null>(null);
     const sourceBufferRef = React.useRef<SourceBuffer | null>(null);
@@ -101,8 +104,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ solanaVideoAddress, so
                     return;
                 }
 
-                console.log('hyrray!');
-
+                getSources({type: 'metadata'}).then(async (metadataSrcs) => {
+                    const metadata = await readMetadata(metadataSrcs);
+                    if(onMetaDataAvailable !== undefined) {
+                        onMetaDataAvailable(metadata);
+                    }
+                });
 
                 currentPositionTimeUnitsBeforeWorryAboutNextInterval.current = 16; // 8 seconds before next fragment will start loading
 
@@ -144,10 +151,55 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ solanaVideoAddress, so
             }
 
         }
-    }, [src]);
+    }, [solanaVideoAddress]);
 
     const addSources = async (sourcesData :any[]) => {
+    }
 
+    const readMetadata = async(metadataSources: VideoDataSource[]) =>{
+        for (const mdSrcItem of metadataSources) {
+            const response = await fetch(mdSrcItem.url, {});
+            if (response.ok) {
+                let data = null;
+                try {
+                    data = await response.json();
+                    return data;
+                }catch(err :any){
+                    console.log("Error #012. Error reading metadata", solanaVideoAddress);
+                }
+                break;
+            } else {
+                console.log("Error #013. Error reading metadata", solanaVideoAddress);
+            }
+        }
+        return null;
+    }
+
+    const getSources = async (params :any)=> {
+        let filteredDataSources :VideoDataSource[];
+        if(params?.type !== undefined){
+            filteredDataSources = dataSourcesRef.current.filter(item => item.type === params.type);
+        }else{
+            filteredDataSources = [...dataSourcesRef.current];
+        }
+        if(params?.isAuthenticFlag !== undefined){
+            filteredDataSources = filteredDataSources.filter(item => item.isAuthenticFlag === params.isAuthenticFlag);
+        }
+
+        let returnValue :VideoDataSource[] = [];
+        if((params?.count !== undefined) && (typeof params.count === "number") && Number.isInteger(params.count) && (params.count > 0)){
+            // by default shuffle the sources to pick a random one
+            let _count = 0;
+            while(_count < params.count){
+                const currentDsIndex = Math.floor(Math.random() * filteredDataSources.length);
+                const currentDs = filteredDataSources.splice(currentDsIndex, 1)[0];
+                returnValue.push(currentDs);
+                _count++;
+            }
+            return returnValue;
+        }else{
+            return filteredDataSources;
+        }
     }
 
     const openDecentralizedVideo = async() => {
@@ -238,6 +290,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ solanaVideoAddress, so
                                                                     const datumType = srcElement?.type ?? 'data';
                                                                     const datumRanges = srcElement?.ranges ?? null;
                                                                     switch (datumType) {
+                                                                        case "metadata":
                                                                         case "midx":
                                                                         case "data":
                                                                         case "mcs": {
@@ -246,7 +299,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ solanaVideoAddress, so
                                                                                 dataSourcesRef.current.push({
                                                                                     url: filenameFullUrl,
                                                                                     type: datumType,
-                                                                                    ranges: datumRanges
+                                                                                    ranges: datumRanges,
+                                                                                    isAuthenticFlag: srcElement?.isAuthenticFlag === undefined ? 1 : (srcElement?.isAuthenticFlag ? 1 : 0),
                                                                                 });
                                                                             }else if(Array.isArray(srcElement?.substorages)) {
                                                                                 for (const srcMoofIndexElementSubstorage of srcElement?.substorages) {
@@ -257,7 +311,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ solanaVideoAddress, so
                                                                                             dataSourcesRef.current.push({
                                                                                                 url: filenameFullUrl,
                                                                                                 type: datumType,
-                                                                                                ranges: datumRanges
+                                                                                                ranges: datumRanges,
+                                                                                                isAuthenticFlag: srcElement?.isAuthenticFlag === undefined ? 1 : (srcElement?.isAuthenticFlag ? 1 : 0),
                                                                                             });
                                                                                         }
                                                                                     } catch (srcMoofIndexElementSubstorageParseError: any) {
@@ -269,27 +324,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ solanaVideoAddress, so
                                                                     }
                                                                 }
 
-                                                                const moofIndexSrcEntries = responseSrcDataResponse.filter(item => (item?.type === 'midx'));
-                                                                console.log("moofIndexSrcEntries", moofIndexSrcEntries);
-                                                                if (moofIndexSrcEntries.length < 1) {
+                                                                const moofIndexSrcs = await getSources({type: 'midx'});
+                                                                console.log("moofIndexSrcEntries", moofIndexSrcs);
+                                                                if (moofIndexSrcs.length < 1) {
                                                                     console.log("Error receiving sources for for . Notice #009. Requested data is not found. Continuing looking for valid sources.", solanaVideoAddress, filename);
-                                                                }
-                                                                for (const srcMoofIndexElement of moofIndexSrcEntries) {
-                                                                    if (srcMoofIndexElement?.substorages === undefined) {
-                                                                        const filenameFullUrl = dataFolder + "/" + srcMoofIndexElement.path;
-                                                                        midxUrls.push(filenameFullUrl);
-                                                                    } else if (Array.isArray(srcMoofIndexElement?.substorages)) {
-                                                                        for (const srcMoofIndexElementSubstorage of srcMoofIndexElement?.substorages) {
-                                                                            try {
-                                                                                const substorageDataFolder = await currentAuthenticStorage.data.getSubstorageConfigFolder(srcMoofIndexElementSubstorage, "data");
-                                                                                if (substorageDataFolder !== undefined) {
-                                                                                    const filenameFullUrl = substorageDataFolder + "/" + srcMoofIndexElement.path;
-                                                                                    midxUrls.push(filenameFullUrl);
-                                                                                }
-                                                                            } catch (srcMoofIndexElementSubstorageParseError: any) {
-                                                                                console.log("Error adding a source. Notice #010. Malformed configuration.", srcMoofIndexElementSubstorageParseError);
-                                                                            }
-                                                                        }
+                                                                }else{
+                                                                    for(const moofIndexSrcItem of moofIndexSrcs){
+                                                                        midxUrls.push(moofIndexSrcItem.url);
                                                                     }
                                                                 }
                                                             }
@@ -346,14 +387,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ solanaVideoAddress, so
                 });
             }else{
                 // as a fallback use moofIndexSrc prop
-                const response = await fetch(moofIndexSrc ?? '', {});
+                /*const response = await fetch(moofIndexSrc ?? '', {});
                 const buffer: Buffer<ArrayBuffer> = Buffer.from(await response.arrayBuffer());
                 videoOpeningState.current = VIDEO_OPENING_STATE_MOOF_INDEX_RECEIVED;
                 fetchMoofIndex(buffer);
-                return_value = true;
+                return_value = true;*/
             }
         }
-        console.log("about to return", return_value);
         return return_value;
     }
 
@@ -601,7 +641,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ solanaVideoAddress, so
                 onStalled={handleOnStalled}
                 onSuspend={handleOnSuspend}
                 onTimeUpdate={handleTimeUpdate}
-                style={{ width: '100%', maxWidth: '800px' }}
+                style={style}
             />
         </>
     )

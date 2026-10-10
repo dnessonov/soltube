@@ -266,6 +266,18 @@ export interface CreateOrUpdateVideoResultWeb3 {
     tx_signature :string;
 }
 
+export const findVideoAccountAddress = async(solanaProgramAddr: string, video_id: string): Promise<[PublicKey, number]> => {
+    const programId = new PublicKey(solanaProgramAddr);
+
+    let pda_address: PublicKey;
+    let bump: number | undefined = undefined;
+
+    const str_id_hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(video_id)));
+    const seeds = [Buffer.from("video"), str_id_hash];
+    [pda_address, bump] = PublicKey.findProgramAddressSync(seeds, programId);
+    return [pda_address, bump];
+}
+
 export const buildCreateOrUpdateVideoInstructionWeb3 = async (operation :typeof OP_CREATE_VIDEO, owner: PublicKey, feePayer: PublicKey, video_id :string, storages_to_add :CreateNewVideoArgsStorageConfig[], storages_to_del :PublicKey[] | null, options? :CreateStorageOptionsWeb3) : Promise<BuildCreateOrUpdateVideoInstructionResultWeb3> => {
     const programId = new PublicKey(typeof options?.overrideProgramId === "string" ? options.overrideProgramId : SOLANA_PROGRAM_ADDRESS);
 
@@ -274,9 +286,7 @@ export const buildCreateOrUpdateVideoInstructionWeb3 = async (operation :typeof 
 
     switch(operation){
         case OP_CREATE_VIDEO:
-            const str_id_hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(video_id)));
-            const seeds = [Buffer.from("video"), str_id_hash];
-            [pda_address, bump] = PublicKey.findProgramAddressSync(seeds, programId);
+            [pda_address, bump] = await findVideoAccountAddress(programId.toString(), video_id);
             break;
         case OP_UPDATE_VIDEO:
         default:

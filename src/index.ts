@@ -282,9 +282,12 @@ export const readSolanaVideoAccount = (client: SolanaClient, address: string): [
     const [abortController,dataPromise] = readSolanaAccountData(client, address);
     return [abortController, new Promise<SolanaVideoAccount | null | undefined>((resolve, reject) => {
         dataPromise.then((data) => {
-            if(data === undefined){
+            if(data === undefined) {
                 // console.log("CP1 readSolanaVideoAccount has been safely aborted by the user.");
                 resolve(undefined);
+            }else if(data === null){
+                // account doesn't exist
+                resolve(null);
             }else{
                 const subArrayBytesView = new DataView(data.buffer, 0, 40);
 
@@ -343,6 +346,9 @@ export const readSolanaVideoStorageAccount = (client: SolanaClient, address: str
             if(data === undefined){
                 // console.log("CP1 readSolanaVideoStorageAccount has been safely aborted by the user.");
                 resolve(undefined);
+            }else if(data === null){
+                // account doesn't exist
+                resolve(null);
             }else{
                 if(data.length < 35){
                     resolve(null);
@@ -394,7 +400,7 @@ export const readSolanaVideoStorageAccount = (client: SolanaClient, address: str
     })]
 }
 
-const readSolanaAccountData = (client: SolanaClient, address: string): [AbortController, Promise<Uint8Array | undefined>]  => {
+export const readSolanaAccountData = (client: SolanaClient, address: string): [AbortController, Promise<Uint8Array | undefined | null>]  => {
 
     const abortController = new AbortController();
     const { signal } = abortController;
@@ -405,19 +411,25 @@ const readSolanaAccountData = (client: SolanaClient, address: string): [AbortCon
             let compressedBytes: Uint8Array;
             const readData = get_account_result?.value?.data?.[0];
 
-            if (typeof window !== 'undefined' && typeof window.atob === 'function') {
-                const binaryString = window.atob(readData);
-                compressedBytes = new Uint8Array(binaryString.length);
-                for(let i = 0; i < binaryString.length; i++){
-                    compressedBytes[i] = binaryString.charCodeAt(i);
-                }
-            }else{
-                const nodeBuffer = Buffer.from(readData, 'base64');
-                compressedBytes = new Uint8Array(nodeBuffer.buffer, nodeBuffer.byteOffset, nodeBuffer.byteLength);
-            }
+            console.log('readSolanaAccountData 1', readData, get_account_result);
 
-            const unCompressedBytes: Uint8Array = decompressFz(compressedBytes);
-            resolve(unCompressedBytes);
+            if(get_account_result?.value) {
+                if (typeof window !== 'undefined' && typeof window.atob === 'function') {
+                    const binaryString = window.atob(readData);
+                    compressedBytes = new Uint8Array(binaryString.length);
+                    for (let i = 0; i < binaryString.length; i++) {
+                        compressedBytes[i] = binaryString.charCodeAt(i);
+                    }
+                } else {
+                    const nodeBuffer = Buffer.from(readData, 'base64');
+                    compressedBytes = new Uint8Array(nodeBuffer.buffer, nodeBuffer.byteOffset, nodeBuffer.byteLength);
+                }
+
+                const unCompressedBytes: Uint8Array = decompressFz(compressedBytes);
+                resolve(unCompressedBytes);
+            }else{
+                resolve(null);
+            }
         }).catch((error: any) => {
             if (error instanceof DOMException && error.name === "AbortError") {
                 resolve(undefined);
